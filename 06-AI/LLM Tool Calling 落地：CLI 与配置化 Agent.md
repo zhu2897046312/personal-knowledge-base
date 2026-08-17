@@ -2,8 +2,8 @@
 title: LLM Tool Calling 落地：CLI 与配置化 Agent
 tags: [tool-calling, agent, go, eino, iot]
 created: 2026-08-13
-updated: 2026-08-13
-aliases: [Tool Calling, 配置驱动 Agent, Dynamic Tool Registry]
+updated: 2026-08-17
+aliases: [Tool Calling, 配置驱动 Agent, Dynamic Tool Registry, DeviceCommand]
 summary: 把自己写的 CLI 工具注册成大模型的 Tool，由后端拦截 Tool Call 请求并执行命令；进一步把 Tool 定义做成数据库配置，实现新设备/新工具零代码接入
 type: learning
 ---
@@ -150,11 +150,62 @@ for _, cfg := range toolsConfig {
 
 带来的优势：ESP32 固件彻底"傻瓜化"（只订阅自己的 MQTT Topic 转发 payload，不需要知道自己控制的是什么设备）；新设备接入秒级上架（Admin 勾选保存，Go 服务监听 Pub/Sub 自动热更新 Tool 池，甚至不用重启）；Prompt 与 RAG 参数（Top-K、相似度阈值）也可以放进数据库做热更新。
 
+## 5. 双向数据链路：不只是"下发指令"，还要"状态上报"
+
+完整链路是 `空调 ↔ 本地控制器（ESP32/树莓派） ↔ Go Eino 服务（本地或云端） ↔ 大模型 API`，容易只关注"从上往下发指令"的正向流程，而忽略状态/传感器数据要反向上报：
+
+- **正向（控制指令链）**：用户说话 → Go Eino 服务调大模型 → 大模型返回 Tool Call → 服务通过 WebSocket/MQTT 把 JSON 指令发给本地控制器 → 本地控制器发射红外/蓝牙驱动硬件。
+- **反向（状态上报链）**：本地控制器接了温湿度传感器（如 DHT11）等，定时把 `{"current_temp": 30, "humidity": 75}` 上报给 Go Eino 服务更新内存中的环境状态；当温度超过阈值时，服务甚至不用等用户开口，就能让大模型主动建议："检测到室内温度 30℃，是否为你开启空调？"
+
+Go Eino 服务放在本地局域网（树莓派/NAS）还是远程云端各有取舍：云端方案最省钱省心、改 Prompt/Tool 只需重新部署云端包，但本地控制器断网就无法工作；本地局域网部署延迟更低、断网仍可用，但需要一台常年开机的设备，运维成本更高。绝大多数个人 DIY 优先选云端。
+
+## 6. 把大模型输出的 JSON 清洗成 MQTT 需要的 JSON
+
+大模型 Tool Call 输出的是"意图抽取结果"，硬件需要的是特定协议的 Payload，中间是一层数据映射与格式化。三种实现方案：
+
+- **方案一：`text/template` 模板引擎**（推荐，适合 Admin 动态配置）：MQTT Payload 结构写成模板存数据库，Go 服务用标准库渲染，不改代码即可支持新设备。渲染前用 `json.Unmarshal` 解析 LLM 输出为 `map[string]any`，渲染后再 `json.Unmarshal` 校验结果是合法 JSON。
+- **方案二：Struct 强类型映射**（适合固定设备、追求极致性能）：定义 `LLMACInput` / `MQTTAcPayload` 两个 struct，写清晰的字段级转换函数（含枚举值归一化，如 `fan_speed: "high"` → `Spd: 3`）。
+- **方案三：通用映射字典 + JSON 路径提取**（如 `tidwall/gjson` + `tidwall/sjson`）：适合只需要改字段 key 名的简单场景，用 `map[string]string` 描述"LLM 字段路径 → MQTT 字段路径"的映射规则。
+
+无论用哪种方案，清洗层都必须做 3 个防护：**数值范围裁剪**（大模型误返回超范围值时钳制，如温度>30 强制设为 30）、**默认值兜底**（字段缺失时给安全默认值）、**类型强制转换**（防止大模型把数字返回成字符串）。
+
+## 7. Admin 配置化与强类型绑定：通用 DeviceCommand 模型
+
+"配置驱动"和"强类型安全"并不矛盾，反而应该绑定在一起才是生产级实现。几乎所有家用电器的控制，抽象到底层都只是三类强类型参数的组合：**开关量**（Boolean/Enum，如开关/摇头）、**连续数值量**（Int/Float，如温度/风速/定时）、**模式离散量**（Enum，如制冷/制热/除湿）。
+
+```go
+package device
+
+// DeviceCommand 通用硬件控制指令（强类型）
+type DeviceCommand struct {
+    DeviceID string                 `json:"device_id"`
+    Action   string                 `json:"action"`
+    Power    *bool                  `json:"power,omitempty"`
+    Mode     string                 `json:"mode,omitempty"`
+    Value    *float64               `json:"value,omitempty"` // 温度/风速/亮度等连续量
+    Extra    map[string]interface{} `json:"extra,omitempty"`
+}
+```
+
+Admin 后台配置的不再是任意 JSON，而是"标准动作 → 设备底层协议"的映射规则（如 `payload_format: {"pwr": "{{if .Power}}1{{else}}0{{end}}", "temp": "{{.Value}}"}`）。处理链路：大模型输出 JSON → Go 用 `DeviceCommand` 强类型反序列化并校验范围（超范围自动钳制，如 `math.Max(16, math.Min(30, *cmd.Value))`）→ 读取该 DeviceID 对应的 Admin 模板配置 → 模板渲染出最终 MQTT Payload → 下发。
+
+这样带来三个优势：**绝对安全防护**（强类型 + 范围校验杜绝大模型吐出乱码烧坏硬件）、**全家电通用**（空调/风扇/台灯/扫地机共用一套 struct 和模板引擎）、**Admin 界面标准化**（前端甚至能直接根据这个强类型结构体渲染配置表单）。
+
+## 8. 造轮子还是用轮子：开源生态里已有的成熟方案
+
+把系统抽象到这个层级时，其实已经在重新推导目前最成熟的开源智能家居架构：
+
+- **Home Assistant（HA）**：全球最大的开源智能家居平台，底层就是"强类型域（Domain，如 `light`/`climate`）+ 设备强制归一化"，社区的 Extended OpenAI Conversation 等插件做的正是"设备列表动态生成 JSON Schema 注册给大模型，大模型输出后拦截执行标准 Service Call"这一套逻辑。缺点是用 Python 写、体量庞大。
+- **ESPHome**：C++ 开源固件生成器，写几十行 YAML 定义引脚功能，编译烧录即得到带 MQTT/OTA 的固件，不用手写单片机代码。但它只能做"纯配置化的简单硬件固件"，跑不了本地 STT/端侧小模型（见 [[本地端侧意图过滤：无唤醒词常驻 AI 网关]]），这种更重的边缘 AI 节点需要香橙派/树莓派 5 这类高算力开发板自己写程序。
+
+选型建议：**只想要能用的智能家电环境** → 直接 Home Assistant + ESPHome 拼装，几天落地；**想练手打造轻量级 Go 引擎、做毕业设计或开源项目积累** → 沿用本笔记的 Go + Eino + MQTT 路线，硬件端可以先借力 ESPHome/Tasmota，云端大脑自己写。
+
 # 总结
 
-> 从"API 调用师"升级为平台架构师的关键，是把特定业务逻辑抽象成"通用运行引擎 + 动态配置"：用 Go + Eino 做底座引擎，JSON Schema 做动态接口映射，MQTT 传递标准指令，就能搭出一套扩展性无上限的个人智能家居 AI 中枢。
+> 从"API 调用师"升级为平台架构师的关键，是把特定业务逻辑抽象成"通用运行引擎 + 动态配置"：用 Go + Eino 做底座引擎，JSON Schema 做动态接口映射，MQTT 传递标准指令，就能搭出一套扩展性无上限的个人智能家居 AI 中枢。造轮子前先看一眼 Home Assistant + ESPHome，想清楚是要"能用"还是要"练手"。
 
 # 相关链接
 
 - [[Eino 与 LangGraph：Chain vs Graph 选型]]
 - [[智能硬件 Tool Calling 改造构想]]
+- [[本地端侧意图过滤：无唤醒词常驻 AI 网关]]

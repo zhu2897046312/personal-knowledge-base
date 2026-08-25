@@ -2,7 +2,7 @@
 title: 阿里云低配 docker pull OOM 宕机
 tags: [docker, linux, aliyun, oom, swap]
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-25
 aliases: [docker pull 卡死, OOM Killer, 2G 服务器 Swap]
 summary: 2核 2G 无 Swap 时 docker pull 解压打满内存/IO，触发 OOM 或系统挂起
 type: pitfall
@@ -79,16 +79,16 @@ free -m
 sudo systemctl restart docker
 ```
 
-## 3. 调整 Swappiness
+## 3. 调整 Swappiness（必须做，否则 Swap 建了也不生效）
 
-让系统更愿意把闲置页换到 Swap，给解压腾出物理内存：
+关键点：光靠第 1 步 `swapon` 建好 Swap 分区/文件**不代表 OOM 时内核真的会用它**。`vm.swappiness` 默认值偏低，内核会尽量死扛物理内存、迟迟不换页到 Swap，等真正判定内存耗尽时往往已经来不及、直接触发 OOM Killer 或整机卡死。必须调高 `vm.swappiness`，让内核更早、更愿意把闲置页换出到 Swap，Swap 才能真正在扛内存压力时发挥作用：
 
 ```bash
 # 临时生效
-sudo sysctl vm.swappiness=60
+sudo sysctl vm.swappiness=80
 
-# 永久生效
-echo "vm.swappiness=60" | sudo tee -a /etc/sysctl.conf
+# 永久生效（修改 /etc/sysctl.conf）
+echo "vm.swappiness=80" | sudo tee -a /etc/sysctl.conf
 ```
 
 ## 终极建议

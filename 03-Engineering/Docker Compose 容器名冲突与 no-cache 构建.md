@@ -56,3 +56,4 @@ docker compose -p personal-blog up -d
 
 - [[Docker MySQL 远程连接]]
 - [[Docker]]
+- [[Docker Compose environment 优先级高于 .env]]

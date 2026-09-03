@@ -1,10 +1,10 @@
 ---
 title: 天呓 ERP · 广告资产与运营协同管理平台
-tags: [react19, typescript, redux-toolkit, rtk-query, antd6, rsbuild, enterprise-frontend]
+tags: [react19, typescript, redux-toolkit, rtk-query, antd6, rsbuild, enterprise-frontend, snapchat]
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
 aliases: [天呓 ERP, Tianyi ERP, erp-web, 广告资产管理平台]
-summary: 面向跨境电商广告投放团队的企业级中后台系统，独立负责广告账户/FB 个号/像素/IP 资产管理与工单协同多个模块开发，并完成存量遗留系统迁移与跨模块性能治理
+summary: 面向跨境电商广告投放团队的企业级中后台系统，独立负责广告账户/FB 个号/像素/IP 资产管理、Snapchat 广告投放前端模块与工单协同多个模块开发，并完成存量遗留系统迁移与跨模块性能治理
 type: resume-project
 ---
 
@@ -15,6 +15,7 @@ type: resume-project
 # 核心贡献
 
 - 独立搭建广告账户、FB 个号、像素管理、IP 登记四大资产模块，统一实现批量导入导出、权限分级入口与列表页架构
+- 独立设计开发 Snapchat 广告投放前端模块（账号管理/广告发布/模板管理），对接自研后端服务「svr_ads」；OAuth 弹窗授权、三层级联发布列表下钻导航、超大素材矩阵虚拟列表均为独立设计实现
 - 主导存量遗留系统（Facebook 广告账户/主页管理/话术中心等）从无类型 JSX 迁移为 TypeScript + RTK Query 架构，统一接入新网关并修复多个历史遗留 bug
 - 落地运营团队在线状态协同机制（上线/下线/请假），抽取跨页面复用的 `LeaveModal` 组件消除重复实现，解决多人协同下 RTK Query 缓存滞后问题
 - 发现并合并跨业务域重复定义的查询 endpoint，将资产统计报表页并发相同请求从 3 次降至 1 次；主导仓库编码规范治理（禁三目、禁 enum、组件职责拆分）
@@ -25,7 +26,9 @@ type: resume-project
 - 独立搭建/重构 **7 个**核心业务模块，为 **5 个**资产列表页统一接入批量导入导出能力
 - 消除重复请求后资产统计报表页并发请求数降至 **1/3**
 - 代码规范治理提交 **40+ 次**，推动仓库范围编码规范在存量模块落地
+- Snapchat 前端模块 2 周内产出 **90 个**提交，净变更约 **+20,755/-4,627** 行代码
 
 # 相关链接
 
 - [[resume-天呓网络科技有限公司-前端工程师]]
+- [[resume-Snapchat 广告投放后端服务「svr_ads」]]
